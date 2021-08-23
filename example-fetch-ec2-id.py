@@ -1,3 +1,16 @@
+# Essentially, there is no native way in the CDK to fetch instance id's and place them into an array for us to use in our template. Furthermore, it must be noted that the vpc.fromLookup [1] method does not exactly dynamically fetch "all of the vpc's" in your account as you still need to define some parameters in your code.
+
+# With the above being said, because this is not possible using the CDK, there is a working around we can look at. For this work around, we can leverage any one of the AWS SDK's to obtain the EC2 instances in a given region, place them in an array, generate our template and launch our stack accordingly.
+
+# While we do not in fact provide code support here at Premium Support, I have written out an example code for you in Python that demonstrates the above which I have attached to the case for your convenience. In my example code you will see the following:
+
+# 	- Create an EC2 resource using Boto3 [2] where I obtain all the instance  id's in my given region and store the results in an array
+# 	- Loop through the instance id's from the array we created above to generate the resources for our CloudFormation stack. To do this, I used the aws_cloudwatch.Alarm [3] resource in the CDK.
+
+# When we run the "CDK synth" command on this implementation, the instance id's are retrieved and the template is generated accordingly. I have tested and validated this code example on my end and confirm that it does work as expected.
+
+# To summarize your main concern, no we do not need to hardcode the EC2 instance values into our code as we can leverage an AWS SDK to get this information for us. If you would like to discuss this further, please feel free to reach out to me at any time as I will be more than happy to further assist
+
 from aws_cdk import (
     core as cdk,
     aws_cloudwatch as cloudwatch,
