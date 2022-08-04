@@ -1,0 +1,15 @@
+{
+    "Version": "2012-10-17",
+    "Id": "Policy1659604286481",
+    "Statement": [
+        {
+            "Sid": "Stmt1659604284592",
+            "Effect": "Allow",
+            "Principal": {
+                "AWS": []
+            },
+            "Action": "s3:ListBucket",
+            "Resource": "arn:aws:s3:::poc-lambda-ps-test-bucket"
+        }
+    ]
+}
