@@ -1,8 +1,8 @@
 import boto3
 import json
 
-bucket_name = 'poc-lambda-ps-test-bucket'
-parameter_name = '/rbcz/general/account-ids/dev'
+bucket_name = ''
+parameter_name = ''
 local_bucket_policy = 'bucket_policy.json'
 
 def lambda_handler(event, context):
