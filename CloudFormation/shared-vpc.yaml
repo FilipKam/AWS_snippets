@@ -1,0 +1,593 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: This script creates a Multi-AZ, multi-subnet VPC infrastructure with
+  managed NAT gateways, VPC peering and Security Groups.
+Metadata:
+  Author: FilipKamenar
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Availability Zone Configuration
+        Parameters:
+          - AvailabilityZones
+          - NumberOfAZs
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - VPCCIDR
+          - CreatePublicSubnets
+          - CreatePrivateSubnets
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
+          - PublicSubnet1CIDR
+          - LogsRetentionInDays
+          - SecurityGroupName
+    ParameterLabels:
+      AvailabilityZones:
+        default: Availability Zones
+      CreatePrivateSubnets:
+        default: Create private subnets
+      CreatePublicSubnets:
+        default: Create public subnets
+      NumberOfAZs:
+        default: Number of Availability Zones
+      #    **********   Private subnets    **********
+      PrivateSubnet1CIDR:
+        default: Private subnet 1 CIDR
+      PrivateSubnet2CIDR:
+        default: Private subnet 2 CIDR
+      #    **********   Public subnets    **********
+      PublicSubnet1CIDR:
+        default: Public subnet 1 CIDR
+      VPCCIDR:
+        default: VPC CIDR
+      LogsRetentionInDays:
+        default: Flow Logs Retention In Days
+      SecurityGroupName:
+        default: Name of security group
+Parameters:
+  ManagedResourcePrefix:
+    Type: String
+    Description: 'Prefix for the managed resources'
+    Default: ''
+  #    It is neccessary to insert certain names of each AZ. Keep in mind that AZs names differs for each region.
+  AvailabilityZones:
+    Type: CommaDelimitedList
+    Description: 'List of Availability Zones to use for the subnets in the VPC.'
+    Default: 'eu-central-1a, eu-central-1b'
+  CreatePrivateSubnets:
+    Type: String
+    Description: 'Set to false to create only public subnets. If false, the CIDR parameters for ALL private subnets will be ignored.'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'true'
+  CreatePublicSubnets:
+    Type: String
+    Description: 'Set to false to create only private subnets. If false, the CIDR parameters for ALL public subnets will be ignored.'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'true'
+  NumberOfAZs:
+    Type: String
+    Description: 'Number of Availability Zones to use in the VPC. This must match your selections in the list of Availability Zones parameter.'
+    AllowedValues:
+      - '2'
+      - '3'
+      - '4'
+    Default: '2'
+  #    Subnety v Irsku byly v rozsahu site 10.28.0.0/16, probehla pouze inkrementace na 10.29.0.0
+  #    **********   Private subnets    **********
+  PrivateSubnet1CIDR:
+    Type: String
+    Description: 'CIDR block for private subnet 1 located in Availability Zone 1'
+    Default: '10.29.0.0/19'
+  PrivateSubnet2CIDR:
+    Type: String
+    Description: 'CIDR block for private subnet 2 located in Availability Zone 2'
+    Default: '10.29.32.0/19'
+  #    **********   Public subnets    **********
+  PublicSubnet1CIDR:
+    Type: String
+    Description: 'CIDR block for the public DMZ subnet 1 located in Availability Zone 1'
+    Default: '10.29.128.0/20'
+  VPCCIDR:
+    Type: String
+    Description: 'CIDR block for the VPC'
+    Default: '10.29.0.0/16'
+  RemoteVPNSubnetCIDR:
+    Type: String
+    Description: 'CIDR block for the remote subnet connected via VPN'
+    Default: '192.168.32.0/20'
+  TransitVPC:
+    Type: String
+    Description: 'Do you want to connect this VPC to a transit VPC via tagging?'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Default: 'false'
+  DestinationCidrBlockPeeringRoute1:
+    Type: String
+    Description: 'Subnet for peering route 1'
+    Default: '0.0.0.0/0'
+  DestinationCidrBlockPeeringRoute2:
+    Type: String
+    Description: 'Subnet for peering route 2'
+    Default: '10.28.0.0/16'
+  LogsRetentionInDays:
+    Type: Number
+    Description: 'Specifies the number of days you want to retain log events in the specified log group.'
+    AllowedValues: [ 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653 ]
+    Default: 30
+  myDomainName:
+    Type: String
+    Description: 'Name of the domain name used for DHCP options'
+    Default: 'vs.local'
+  myDomainNameServers:
+    Type: String
+    Description: 'Domain name servers used for DHCP options'
+    Default: '10.28.24.123'
+  Environment:
+    Type: String
+    Description: 'Specify whether the environment is prod or test'
+    Default: 'test'
+    AllowedValues:
+      - 'prod'
+      - 'test'
+  SecurityGroupName:
+    Type: String
+    Description: 'Specify name of the security group'
+    Default: 'All traffic internal VS and SharedVPC'
+
+Conditions:
+  PublicSubnetsCondition: !Equals [ !Ref 'CreatePublicSubnets', 'true' ]
+#  isTestCondition: !Equals [ !Ref 'Environment', 'test' ]
+#  3AZCondition: !Or [ !Equals [ !Ref 'NumberOfAZs', '3' ], !Condition '4AZCondition' ]
+#  4AZCondition: !Equals [ !Ref 'NumberOfAZs', '4' ]
+#  3AZPublicCondition: !And [ !Condition '3AZCondition', !Condition 'PublicSubnetsCondition' ]
+#  4AZPublicCondition: !And [ !Condition '4AZCondition', !Condition 'PublicSubnetsCondition' ]
+  NATGatewayCondition: !And [ !Condition 'PrivateSubnetsCondition', !Condition 'PublicSubnetsCondition' ]
+#  NATGateway&3AZCondition: !And [ !Condition 'NATGatewayCondition', !Condition '3AZCondition' ]
+#  NATGateway&4AZCondition: !And [ !Condition 'NATGatewayCondition', !Condition '4AZCondition' ]
+  PrivateSubnetsCondition: !Equals [ !Ref 'CreatePrivateSubnets', 'true' ]
+#  PrivateSubnets&3AZCondition: !And [ !Condition 'PrivateSubnetsCondition', !Condition '3AZCondition' ]
+#  PrivateSubnets&4AZCondition: !And [ !Condition 'PrivateSubnetsCondition', !Condition '4AZCondition' ]
+  Public&PrivateSubnetsCondition: !And [ !Condition 'PublicSubnetsCondition', !Condition 'PrivateSubnetsCondition' ]
+#  Public&PrivateSubnets&3AZCondition: !And [ !Condition 'PublicSubnetsCondition', !Condition 'PrivateSubnetsCondition', !Condition '3AZCondition' ]
+#  Public&PrivateSubnets&4AZCondition: !And [ !Condition 'PublicSubnetsCondition', !Condition 'PrivateSubnetsCondition', !Condition '4AZCondition' ]
+  S3VPCEndpointCondition: !And [ !Condition 'PrivateSubnetsCondition', !Not [ !Or [ !Equals [ !Ref 'AWS::Region', us-gov-west-1 ], !Equals [ !Ref 'AWS::Region', cn-north-1 ] ] ] ]
+  TransitVPCCondition: !Equals [ !Ref 'TransitVPC', 'true' ]
+
+Resources:
+  DHCPOptions:
+    Type: AWS::EC2::DHCPOptions
+    Properties:
+      DomainName: !Ref 'myDomainName'
+      DomainNameServers:
+        - !Ref 'myDomainNameServers'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-vs.local-aws
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref 'VPCCIDR'
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-VPC
+        - !If
+          - TransitVPCCondition
+          - - Key: transitvpc:spoke
+              Value: true
+          - !Ref 'AWS::NoValue'
+
+  VPCDHCPOptionsAssociation:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties:
+      VpcId: !Ref 'VPC'
+      DhcpOptionsId: !Ref 'DHCPOptions'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Condition: PublicSubnetsCondition
+    Properties:
+      Tags:
+        - Key: Network
+          Value: Public
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-InternetGateway
+
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Condition: PublicSubnetsCondition
+    Properties:
+      VpcId: !Ref 'VPC'
+      InternetGatewayId: !Ref 'InternetGateway'
+
+  #    **********   Private subnets    **********
+  PrivateSubnet1:
+    Condition: PrivateSubnetsCondition
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'PrivateSubnet1CIDR'
+      AvailabilityZone: !Select [ '0', !Ref 'AvailabilityZones' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-PrivateSubnet1
+        - Key: Network
+          Value: Private
+
+  PrivateSubnet2:
+    Condition: PrivateSubnetsCondition
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'PrivateSubnet2CIDR'
+      AvailabilityZone: !Select [ '1', !Ref 'AvailabilityZones' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-PrivateSubnet2
+        - Key: Network
+          Value: Private
+
+  #    **********   Public subnets    **********
+  PublicSubnet1:
+    Condition: PublicSubnetsCondition
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref 'VPC'
+      CidrBlock: !Ref 'PublicSubnet1CIDR'
+      AvailabilityZone: !Select [ '0', !Ref 'AvailabilityZones' ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-PublicSubnet1
+        - Key: Network
+          Value: Public
+
+  #    **********   Private subnets routing    **********
+  PrivateSubnet1RouteTable:
+    Condition: PrivateSubnetsCondition
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-PrivateSubnet1
+        - Key: Network
+          Value: Private
+
+  PrivateSubnet1Route:
+    Condition: NATGatewayCondition
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'PrivateSubnet1RouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !If [ NATGatewayCondition, !Ref 'NATGateway1', !Ref 'AWS::NoValue' ]
+
+  PrivateSubnet1RouteTableAssociation:
+    Condition: PrivateSubnetsCondition
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnet1'
+      RouteTableId: !Ref 'PrivateSubnet1RouteTable'
+
+  PrivateSubnet2RouteTable:
+    Condition: PrivateSubnetsCondition
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-PrivateSubnet2
+        - Key: Network
+          Value: Private
+
+  PrivateSubnet2RouteTableAssociation:
+    Condition: PrivateSubnetsCondition
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnet2'
+      RouteTableId: !Ref 'PrivateSubnet2RouteTable'
+
+  #    **********   Public subnets routing    **********
+  PublicSubnetRouteTable:
+    Condition: PublicSubnetsCondition
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref 'VPC'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-Public Subnets
+        - Key: Network
+          Value: Public
+
+  PublicSubnetRoute:
+    Condition: PublicSubnetsCondition
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'PublicSubnetRouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref 'InternetGateway'
+
+  PublicSubnet1RouteTableAssociation:
+    Condition: PublicSubnetsCondition
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnet1'
+      RouteTableId: !Ref 'PublicSubnetRouteTable'
+
+  #    **********   NAT    **********
+  NAT1EIP:
+    Condition: Public&PrivateSubnetsCondition
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-NAT1EIP
+
+  #  NAT2EIP:
+  #    Condition: Public&PrivateSubnetsCondition
+  #    DependsOn: VPCGatewayAttachment
+  #    Type: AWS::EC2::EIP
+  #    DeletionPolicy: Retain
+  #    Properties:
+  #      Domain: vpc
+
+  NATGateway1:
+    Condition: NATGatewayCondition
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt 'NAT1EIP.AllocationId'
+      SubnetId: !Ref 'PublicSubnet1'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-NATGateway1
+
+  S3VPCEndpoint:
+    Condition: S3VPCEndpointCondition
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action: '*'
+            Effect: Allow
+            Resource: '*'
+            Principal: '*'
+      RouteTableIds:
+        - !Ref 'PrivateSubnet1RouteTable'
+        - !Ref 'PrivateSubnet2RouteTable'
+      ServiceName: !Join [ '', [ com.amazonaws., !Ref 'AWS::Region', .s3 ] ]
+      VpcId: !Ref 'VPC'
+
+  VPCFlowLogsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref LogsRetentionInDays
+
+  VPCFlowLogsRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Allow Resource * for CloudWatch Logs API since the resources are customer defined."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - vpc-flow-logs.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        - PolicyName: LogRolePolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: '*'
+
+  VPCFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt 'VPCFlowLogsRole.Arn'
+      LogGroupName: !Ref 'VPCFlowLogsLogGroup'
+      ResourceId: !Ref 'VPC'
+      ResourceType: VPC
+      TrafficType: ALL
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ManagedResourcePrefix}-All traffic internal VS and SharedVPC'
+      GroupDescription: !Sub '${ManagedResourcePrefix}-All traffic within VS Ostrava'
+      VpcId: !Ref 'VPC'
+      SecurityGroupIngress:
+        - IpProtocol: ICMP
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref 'VPCCIDR'
+          Description: 'ping allow'
+        - IpProtocol: ICMP
+          FromPort: -1
+          ToPort: -1
+          CidrIp: !Ref 'RemoteVPNSubnetCIDR'
+          Description: 'ping allow'
+        - IpProtocol: -1
+          CidrIp: !Ref 'VPCCIDR'
+          Description: 'all traffic from VPC'
+        - IpProtocol: -1
+          CidrIp: !Ref 'RemoteVPNSubnetCIDR'
+          Description: 'all traffic from VPN subnet'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: 'allow all traffic'
+      Tags:
+        - Key: Name
+          Value: !Sub ${ManagedResourcePrefix}-Security Group
+
+  #    **********   VPC Peering and routing  **********
+#  VPCPeering:
+#    Type: AWS::EC2::VPCPeeringConnection
+#    Properties:
+#      PeerRegion: eu-west-1
+#      # VPC ID VPC v lokalite Irsko
+#      PeerVpcId: 'vpc-083052c4df91b45c2'
+#      Tags:
+#        - Key: Name
+#          Value: !Sub ${ManagedResourcePrefix}-VPCPeering
+#      VpcId: !Ref 'VPC'
+#  PeeringRoute1:
+#    Type: 'AWS::EC2::Route'
+#    Properties:
+#      DestinationCidrBlock: !Ref DestinationCidrBlockPeeringRoute1
+#      RouteTableId: !Ref PrivateSubnet1RouteTable
+#      VpcPeeringConnectionId: !Ref VPCPeering
+#  PeeringRoute2:
+#    Type: 'AWS::EC2::Route'
+#    Properties:
+#      DestinationCidrBlock: !Ref DestinationCidrBlockPeeringRoute2
+#      # ID of route table in Ireland region
+#      RouteTableId: 'rtb-0b78cabb94d776835'
+#      VpcPeeringConnectionId: !Ref VPCPeering
+
+Outputs:
+  NAT1EIP:
+    Condition: Public&PrivateSubnetsCondition
+    Description: 'NAT 1 IP address'
+    Value: !Ref 'NAT1EIP'
+    Export:
+      Name: !Sub '${AWS::StackName}-NAT1EIP'
+
+  #    **********   Private subnets output info    **********
+  PrivateSubnet1CIDR:
+    Condition: PrivateSubnetsCondition
+    Description: 'Private subnet 1 CIDR in Availability Zone 1'
+    Value: !Ref 'PrivateSubnet1CIDR'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1CIDR'
+
+  PrivateSubnet1ID:
+    Condition: PrivateSubnetsCondition
+    Description: 'Private subnet 1 ID in Availability Zone 1'
+    Value: !Ref 'PrivateSubnet1'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1ID'
+
+  PrivateSubnet2CIDR:
+    Condition: PrivateSubnetsCondition
+    Description: 'Private subnet 2 CIDR in Availability Zone 2'
+    Value: !Ref 'PrivateSubnet2CIDR'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet2CIDR'
+
+  PrivateSubnet2ID:
+    Condition: PrivateSubnetsCondition
+    Description: 'Private subnet 2 ID in Availability Zone 2'
+    Value: !Ref 'PrivateSubnet2'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet2ID'
+
+  #    **********   Public subnets output info    **********
+  PublicSubnet1CIDR:
+    Condition: PublicSubnetsCondition
+    Description: 'Public subnet 1 CIDR in Availability Zone 1'
+    Value: !Ref 'PublicSubnet1CIDR'
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet1CIDR'
+
+  PublicSubnet1ID:
+    Condition: PublicSubnetsCondition
+    Description: 'Public subnet 1 ID in Availability Zone 1'
+    Value: !Ref 'PublicSubnet1'
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet1ID'
+
+  #    S3VPCEndpoint:
+  #      Condition: S3VPCEndpointCondition
+  #      Description: S3 VPC Endpoint
+  #      Value: !Ref 'S3VPCEndpoint'
+  #      Export:
+  #        Name: !Sub '${AWS::StackName}-S3VPCEndpoint'
+
+  #    **********   Private subnets routing output info    **********
+  PrivateSubnet1RouteTable:
+    Condition: PrivateSubnetsCondition
+    Value: !Ref 'PrivateSubnet1RouteTable'
+    Description: 'Private subnet 1 route table'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1RouteTable'
+
+  PrivateSubnet2RouteTable:
+    Condition: PrivateSubnetsCondition
+    Value: !Ref 'PrivateSubnet2RouteTable'
+    Description: 'Private subnet 2 route table'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet2RouteTable'
+
+  PrivateSubnetRouteTables:
+    Value:
+      !Join
+      - ','
+      - - !If [ PrivateSubnetsCondition, !Ref 'PrivateSubnet1RouteTable', !Ref 'AWS::NoValue' ]
+        - !If [ PrivateSubnetsCondition, !Ref 'PrivateSubnet2RouteTable', !Ref 'AWS::NoValue' ]
+    Description: 'List of private subnet route tables'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnetRouteTables'
+
+  #    **********   Public subnets routing output info    **********
+  PublicSubnetRouteTable:
+    Condition: PublicSubnetsCondition
+    Value: !Ref 'PublicSubnetRouteTable'
+    Description: 'Public subnet route table'
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnetRouteTable'
+
+  VPCCIDR:
+    Value: !Ref 'VPCCIDR'
+    Description: 'VPC CIDR'
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCCIDR'
+
+  VPCID:
+    Value: !Ref 'VPC'
+    Description: 'VPC ID'
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCFrankfurt'
+
+  VPCRegion:
+    Value: !Ref 'AWS::Region'
+    Description: VPC Region
+    Export:
+      Name: !Sub '${AWS::StackName}-VPCRegion'
+
+  SecurityGroupID:
+    Value: !Ref 'SecurityGroup'
+    Description: 'Security group ID'
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroupID'
+
+#  VPCPeeringID:
+#    Value: !Ref 'VPCPeering'
+#    Description: 'VPC peering ID'
+#    Export:
+#      Name: !Sub '${AWS::StackName}-VPCPeeringID'
