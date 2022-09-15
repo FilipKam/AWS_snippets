@@ -19,10 +19,8 @@ bucket_name = 'sdk-workshop-147852'
 
 def client_introduction():
     client = boto3.client('s3')
-
     response = client.list_objects_v2(Bucket=bucket_name) # list all objects in the bucket
     #print(response)
-
     for content in response['Contents']:
         obj_dict = client.get_object(Bucket=bucket_name, Key=content['Key']) # get the object
         print(content['Key'], obj_dict['LastModified']) # print the object key and last modified date
@@ -33,16 +31,14 @@ def client_introduction():
 
 def resource_introduction():
     s3 = boto3.resource('s3')
-
     bucket = s3.Bucket(bucket_name) # get the bucket
     #print(bucket)
-
     #in this case you do not have to make a second API call to get the objects; they're available to you as a collection on the bucket.
-
     for obj in bucket.objects.all(): # list all objects in the bucket
         print(obj.key, obj.last_modified) # print the object key and last modified date
 
-""" The available resources are:
+""" 
+The available resources are:
    - cloudformation
    - cloudwatch
    - dynamodb
@@ -52,9 +48,9 @@ def resource_introduction():
    - opsworks
    - s3
    - sns
-   - sqs """
+   - sqs 
+"""
 
-######################################################################
 
 #client_introduction()
 resource_introduction()
