@@ -4,7 +4,7 @@
 import boto3
 
 client = boto3.client('rds')
-instance_id = 'fika-mariadb-rds-deleteme'
+instance_id = 'SPECIFY INSTANCE ID'
 
 def list_rds():
     ###### List all instances and print defined information ######
