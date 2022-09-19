@@ -5,6 +5,8 @@ import boto3
 
 ec2 = boto3.resource('ec2')
 instance_id = ''
+tag_name = 'ManageBySdk' # Tag name must be specified for the instance
+tag_value = 'True' # Tag name must be specified for the instance
 
 def list_all_instances():
     ###### List all instances ######
@@ -49,7 +51,15 @@ def terminate_instance(instance_id):
     instance = ec2.Instance(instance_id)
     instance.terminate()
 
+def stop_instance_by_tag(tag_name, tag_value):
+    ###### Stop instance by tag name and tag value ######
+    for instance in ec2.instances.filter(Filters=[{'Name': 'tag:'+tag_name, 'Values': [tag_value]}]):
+        if instance.state['Name'] == 'running':
+            print("Stopping instance: {0}".format(instance.id))
+            instance.stop()
+
+stop_instance_by_tag(tag_name, tag_value)
 #start_instance(instance_id)
 #stop_instance(instance_id)
 #terminate_instance(instance_id)
-list_all_instances()
+#list_all_instances()
